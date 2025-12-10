@@ -1,6 +1,7 @@
 from opensearchpy import OpenSearch
 from typing import List, Dict, Optional
 from datetime import datetime
+import dateparser  # ⬅️ إضافة الاستيراد المفقود
 import json
 import os
 
@@ -91,7 +92,7 @@ class DocumentIndexer:
             }
             actions.append(action)
         
-        success, failed = helpers.bulk(self.client, actions)
+        success, failed = helpers.bulk(self.client, actions, raise_on_error=False)
         
         return {
             "success": success,
@@ -129,8 +130,6 @@ class DocumentIndexer:
 
 # مثال على الاستخدام
 if __name__ == "__main__":
-    import dateparser
-    
     # إعداد الاتصال
     client = OpenSearch(
         hosts=[{'host': 'localhost', 'port': 9200}],
@@ -151,7 +150,7 @@ if __name__ == "__main__":
         "content": """
             On January 15, 2024, researchers in New York City published findings about 
             climate change. The study was conducted in Paris and London between 2020 and 2023.
-            The results show significant  increases across all monitored locations.
+            The results show significant increases across all monitored locations.
         """,
         "authors": [
             {
