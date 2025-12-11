@@ -1,7 +1,6 @@
 version: '3.8'
 
 services:
-  # OpenSearch Node
   opensearch:
     image: opensearchproject/opensearch:latest
     container_name: opensearch-node
@@ -11,8 +10,8 @@ services:
       - discovery.type=single-node
       - bootstrap.memory_lock=true
       - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
-      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=YourPassword123!
-      - plugins.security.disabled=false
+      - plugins.security.disabled=true
+      - DISABLE_INSTALL_DEMO_CONFIG=true
     ulimits:
       memlock:
         soft: -1
@@ -28,28 +27,24 @@ services:
     networks:
       - opensearch-net
     healthcheck:
-      test: ["CMD-SHELL", "curl -k -u admin:YourPassword123! https://localhost:9200/_cluster/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
+      test: ["CMD-SHELL", "curl -s http://localhost:9200 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
-  # OpenSearch Dashboards
   opensearch-dashboards:
     image: opensearchproject/opensearch-dashboards:latest
     container_name: opensearch-dashboards
     ports:
       - "5601:5601"
     environment:
-      - OPENSEARCH_HOSTS=https://opensearch:9200
-      - OPENSEARCH_USERNAME=admin
-      - OPENSEARCH_PASSWORD=YourPassword123!
+      - OPENSEARCH_HOSTS=http://opensearch:9200
     depends_on:
       opensearch:
         condition: service_healthy
     networks:
       - opensearch-net
 
-  # Flask Application
   app:
     build: .
     container_name: smart-document-app
@@ -58,8 +53,8 @@ services:
     environment:
       - OPENSEARCH_HOST=opensearch
       - OPENSEARCH_PORT=9200
-      - OPENSEARCH_USER=admin
-      - OPENSEARCH_PASSWORD=YourPassword123!
+      - OPENSEARCH_USER=
+      - OPENSEARCH_PASSWORD=
     depends_on:
       opensearch:
         condition: service_healthy

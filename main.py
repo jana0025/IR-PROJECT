@@ -17,20 +17,19 @@ except ImportError as e:
     print(f"Warning: Could not import custom tools: {e}")
     print("Falling back to direct OpenSearch queries")
     USE_CUSTOM_TOOLS = False
-
+USE_CUSTOM_TOOLS = False
 app = Flask(__name__)
 CORS(app)
 
-# إعداد OpenSearch
+# إعداد OpenSearch - HTTP بدون Authentication
 OPENSEARCH_HOST = os.getenv('OPENSEARCH_HOST', 'localhost')
 OPENSEARCH_PORT = int(os.getenv('OPENSEARCH_PORT', 9200))
-OPENSEARCH_USER = os.getenv('OPENSEARCH_USER', 'admin')
-OPENSEARCH_PASSWORD = os.getenv('OPENSEARCH_PASSWORD', 'YourPassword123!')
 
+# اتصال بسيط بدون authentication
 client = OpenSearch(
     hosts=[{'host': OPENSEARCH_HOST, 'port': OPENSEARCH_PORT}],
-    http_auth=(OPENSEARCH_USER, OPENSEARCH_PASSWORD),
-    use_ssl=True,
+    http_auth=None,  # بدون authentication
+    use_ssl=False,   # بدون SSL
     verify_certs=False,
     ssl_show_warn=False
 )
@@ -128,7 +127,6 @@ def parse_reuters_date(date_str):
 def extract_temporal_expressions(text):
     """
     استخراج التعابير الزمنية من النص
-    (بسيط - يمكن استخدام مكتبة متخصصة مثل dateparser)
     """
     temporal_patterns = [
         r'\b\d{4}\b',  # سنوات
@@ -150,7 +148,6 @@ def extract_temporal_expressions(text):
 def index_document():
     """
     فهرسة مستند واحد
-    Body: JSON document
     """
     try:
         document = request.json
@@ -181,7 +178,6 @@ def index_document():
 def bulk_index():
     """
     فهرسة مجموعة من المستندات
-    Body: {"documents": [...]}
     """
     try:
         data = request.json
@@ -224,30 +220,25 @@ def bulk_index():
 def index_from_folder():
     """
     قراءة وفهرسة جميع ملفات .sgm من مجلد database
-    Body: {"folder_path": "database"} (اختياري - القيمة الافتراضية database)
     """
     try:
-        # معالجة البيانات الواردة
         if request.is_json:
             data = request.json
         else:
             data = {}
         
-        # القيمة الافتراضية هي مجلد database
         folder_path = data.get("folder_path", "database")
         
         print(f"\n{'='*60}")
         print(f"Starting indexing from folder: {folder_path}")
         print(f"{'='*60}")
         
-        # التأكد من وجود المجلد
         if not os.path.exists(folder_path):
             return jsonify({
                 "success": False,
-                "error": f"Folder '{folder_path}' not found. Please make sure the database folder exists."
+                "error": f"Folder '{folder_path}' not found"
             }), 404
         
-        # التحقق من أن المسار هو مجلد وليس ملف
         if not os.path.isdir(folder_path):
             return jsonify({
                 "success": False,
@@ -258,7 +249,6 @@ def index_from_folder():
         processed_files = []
         errors = []
         
-        # قراءة جميع ملفات .sgm من مجلد database
         print(f"Scanning folder: {folder_path}")
         sgm_files = list(Path(folder_path).glob("*.sgm"))
         
@@ -270,7 +260,6 @@ def index_from_folder():
         
         print(f"Found {len(sgm_files)} .sgm files")
         
-        # معالجة كل ملف .sgm
         for file_path in sgm_files:
             try:
                 print(f"Processing: {file_path.name}")
@@ -283,7 +272,6 @@ def index_from_folder():
                 errors.append(error_msg)
                 print(f"✗ {error_msg}")
         
-        # فهرسة جميع المستندات
         if all_documents:
             print(f"\nIndexing {len(all_documents)} documents...")
             
@@ -350,7 +338,6 @@ def index_from_folder():
 def autocomplete():
     """
     البحث التلقائي
-    Parameters: ?q=search_term&size=10
     """
     try:
         query = request.args.get('q', '')
@@ -420,12 +407,6 @@ def autocomplete():
 def smart_search():
     """
     البحث الذكي مع المعايير المكانية والزمانية
-    Body: {
-        "query": "text query",
-        "temporal_expression": "1987",
-        "georeference": "USA",
-        "size": 10
-    }
     """
     try:
         data = request.json
@@ -530,7 +511,6 @@ def smart_search():
 def top_georeferences():
     """
     الحصول على أكثر المواقع تكراراً
-    Parameters: ?size=10
     """
     try:
         size = int(request.args.get('size', 10))
@@ -579,7 +559,6 @@ def top_georeferences():
 def time_distribution():
     """
     توزيع المستندات عبر الزمن
-    Parameters: ?interval=1d (1d, 1w, 1M)
     """
     try:
         interval = request.args.get('interval', '1d')
@@ -632,11 +611,9 @@ def dashboard():
     لوحة تحكم شاملة بجميع التحليلات
     """
     try:
-        # الحصول على إجمالي المستندات
         count_response = client.count(index=INDEX_NAME)
         total_docs = count_response["count"]
         
-        # الحصول على أكثر المواقع
         top_geo_query = {
             "size": 0,
             "aggs": {
@@ -658,7 +635,6 @@ def dashboard():
                 for b in buckets
             ]
         
-        # توزيع المستندات
         time_query = {
             "size": 0,
             "aggs": {
@@ -718,22 +694,19 @@ def health_check():
 @app.route('/api/index/stats', methods=['GET'])
 def index_stats():
     """
-    إحصائيات الفهرس (محسّنة)
+    إحصائيات الفهرس
     """
     try:
-        # التحقق من وجود الـ index
         if not client.indices.exists(index=INDEX_NAME):
             return jsonify({
                 "success": False,
                 "error": f"Index '{INDEX_NAME}' does not exist",
-                "message": "Please run /api/index/from-folder first to create and populate the index"
+                "message": "Please run /api/index/from-folder first"
             }), 404
         
-        # جلب الإحصائيات
         stats = client.indices.stats(index=INDEX_NAME)
         count = client.count(index=INDEX_NAME)
         
-        # الوصول الآمن للبيانات
         index_stats_data = stats.get("indices", {}).get(INDEX_NAME, {})
         total_stats = index_stats_data.get("total", {})
         store_stats = total_stats.get("store", {})
@@ -750,11 +723,9 @@ def index_stats():
         import traceback
         print(f"\n{'='*60}")
         print(f"❌ Error in /api/index/stats:")
-        print(f"Error type: {type(e).__name__}")
-        print(f"Error message: {str(e)}")
+        print(f"Error: {str(e)}")
         print(f"{'='*60}")
         traceback.print_exc()
-        print(f"{'='*60}\n")
         
         return jsonify({
             "success": False,
@@ -768,7 +739,9 @@ if __name__ == '__main__':
     print("Smart Document Retrieval System - Flask API")
     print("="*60)
     print(f"Reading .sgm files from: database folder")
-    print(f"OpenSearch Index: {INDEX_NAME}")
-    print(f"Custom tools enabled: {USE_CUSTOM_TOOLS}")
+    print(f"OpenSearch: {OPENSEARCH_HOST}:{OPENSEARCH_PORT}")
+    print(f"Index: {INDEX_NAME}")
+    print(f"Authentication: DISABLED")
+    print(f"Custom tools: {USE_CUSTOM_TOOLS}")
     print("="*60)
     app.run(debug=True, host='0.0.0.0', port=5000)
