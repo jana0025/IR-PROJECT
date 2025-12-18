@@ -6,73 +6,115 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
+import spacy
 
-# استيراد الأدوات المخصصة
-try:
-    from entity_extractor import EntityExtractor
-    from document_indexer import DocumentIndexer
-    from query_engine import SmartQueryEngine
-    USE_CUSTOM_TOOLS = True
-except ImportError as e:
-    print(f"Warning: Could not import custom tools: {e}")
-    print("Falling back to direct OpenSearch queries")
-    USE_CUSTOM_TOOLS = False
-USE_CUSTOM_TOOLS = False
 app = Flask(__name__)
 CORS(app)
 
-# إعداد OpenSearch - HTTP بدون Authentication
+# تحميل نموذج spaCy لاستخراج المواقع
+try:
+    nlp = spacy.load("en_core_web_sm")
+    NLP_AVAILABLE = True
+except:
+    print("Warning: spaCy model not available. Location extraction will be limited.")
+    NLP_AVAILABLE = False
+
+# إعداد OpenSearch
 OPENSEARCH_HOST = os.getenv('OPENSEARCH_HOST', 'localhost')
 OPENSEARCH_PORT = int(os.getenv('OPENSEARCH_PORT', 9200))
 
-# اتصال بسيط بدون authentication
 client = OpenSearch(
     hosts=[{'host': OPENSEARCH_HOST, 'port': OPENSEARCH_PORT}],
-    http_auth=None,  # بدون authentication
-    use_ssl=False,   # بدون SSL
+    http_auth=None,
+    use_ssl=False,
     verify_certs=False,
     ssl_show_warn=False
 )
 
 INDEX_NAME = "smart_documents"
+
+# ============= دالة استخراج المواقع من النص =============
+
+def extract_locations_from_text(text):
+    """
+    استخراج المواقع الجغرافية من النص باستخدام NLP
+    """
+    if not text or not NLP_AVAILABLE:
+        return []
+    
+    try:
+        doc = nlp(text[:5000])  # أول 5000 حرف للسرعة
+        locations = []
+        
+        for ent in doc.ents:
+            if ent.label_ in ["GPE", "LOC"]:  # GPE: countries/cities, LOC: locations
+                location_name = ent.text.strip()
+                if location_name and location_name not in locations:
+                    locations.append(location_name)
+        
+        return locations[:5]  # أول 5 مواقع
+    except Exception as e:
+        print(f"Error extracting locations: {e}")
+        return []
+
+
+def ensure_document_has_location(document):
+    """
+    التأكد من أن المستند عنده location
+    إذا ما عنده، استخرج من الـ content
+    """
+    # إذا موجود georeferences وفيه بيانات، خلاص تمام
+    if document.get('georeferences') and len(document['georeferences']) > 0:
+        return document
+    
+    # إذا مش موجود، استخرج من المحتوى
+    content = document.get('content', '') or document.get('title', '')
+    
+    if content:
+        extracted_locations = extract_locations_from_text(content)
+        if extracted_locations:
+            document['georeferences'] = extracted_locations
+            document['location_source'] = 'auto-extracted'  # علامة أنه مستخرج تلقائياً
+        else:
+            # إذا ما لقى، حط Unknown
+            document['georeferences'] = ['Unknown']
+            document['location_source'] = 'default'
+    else:
+        document['georeferences'] = ['Unknown']
+        document['location_source'] = 'default'
+    
+    return document
+
+
 # ============= دالة إزالة التكرارات =============
 
 def remove_duplicates(results, key="title"):
     """
-    إزالة التكرارات من النتائج بناءً على مفتاح معين
+    إزالة التكرارات من النتائج
     """
     seen = set()
     unique_results = []
     
     for item in results:
-        # استخراج المفتاح
         if isinstance(item, dict):
             identifier = item.get(key, "")
         else:
             identifier = getattr(item, key, "")
         
-        # تحويل لنص صغير وإزالة المسافات
         identifier = str(identifier).lower().strip()
         
-        # التحقق من عدم التكرار
         if identifier and identifier not in seen:
             seen.add(identifier)
             unique_results.append(item)
     
     return unique_results
 
-# إنشاء الأدوات المخصصة إذا كانت متوفرة
-if USE_CUSTOM_TOOLS:
-    extractor = EntityExtractor()
-    indexer = DocumentIndexer(client, INDEX_NAME, extractor)
-    query_engine = SmartQueryEngine(client, INDEX_NAME, extractor)
 
-
-# ============= دوال مساعدة لقراءة SGML =============
+# ============= دوال SGML =============
 
 def parse_sgm_file(file_path):
     """
-    قراءة وتحليل ملف SGML واستخراج المستندات
+    قراءة وتحليل ملف SGML
     """
     documents = []
     
@@ -80,15 +122,11 @@ def parse_sgm_file(file_path):
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
         
-        # استخدام BeautifulSoup لتحليل SGML
         soup = BeautifulSoup(content, 'html.parser')
-        
-        # العثور على جميع مستندات REUTERS
         reuters_docs = soup.find_all('reuters')
         
         for doc in reuters_docs:
             try:
-                # استخراج المعلومات الأساسية
                 title_tag = doc.find('title')
                 body_tag = doc.find('body')
                 date_tag = doc.find('date')
@@ -98,31 +136,31 @@ def parse_sgm_file(file_path):
                 body = body_tag.get_text(strip=True) if body_tag else ""
                 date_str = date_tag.get_text(strip=True) if date_tag else ""
                 
-                # استخراج الأماكن (georeferences)
+                # استخراج الأماكن من الـ SGML
                 places = []
                 if places_tag:
                     place_tags = places_tag.find_all('d')
                     places = [p.get_text(strip=True) for p in place_tags]
                 
-                # تحويل التاريخ
                 doc_date = parse_reuters_date(date_str)
                 
-                # بناء المستند
                 document = {
                     "title": title,
                     "content": body,
                     "date": doc_date,
-                    "georeferences": places,
+                    "georeferences": places if places else [],
                     "temporal_expressions": extract_temporal_expressions(body),
                     "source_file": os.path.basename(file_path)
                 }
                 
-                # إضافة فقط إذا كان هناك محتوى
+                # التأكد من وجود location
+                document = ensure_document_has_location(document)
+                
                 if title or body:
                     documents.append(document)
                     
             except Exception as e:
-                print(f"Error parsing document in {file_path}: {str(e)}")
+                print(f"Error parsing document: {str(e)}")
                 continue
         
         return documents
@@ -134,29 +172,24 @@ def parse_sgm_file(file_path):
 
 def parse_reuters_date(date_str):
     """
-    تحويل تاريخ Reuters إلى صيغة ISO
-    مثال: "26-FEB-1987 15:01:01.79"
+    تحويل تاريخ Reuters
     """
     try:
-        # إزالة الأجزاء الزائدة من الثواني
         date_str = re.sub(r'\.\d+$', '', date_str)
-        
-        # محاولة التحويل
         dt = datetime.strptime(date_str, "%d-%b-%Y %H:%M:%S")
         return dt.strftime("%Y-%m-%dT%H:%M:%S")
     except:
-        # إذا فشل التحويل، إرجاع None
         return None
 
 
 def extract_temporal_expressions(text):
     """
-    استخراج التعابير الزمنية من النص
+    استخراج التعابير الزمنية
     """
     temporal_patterns = [
-        r'\b\d{4}\b',  # سنوات
+        r'\b\d{4}\b',
         r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b',
-        r'\b\d{1,2}/\d{1,2}/\d{2,4}\b',  # تواريخ بصيغة mm/dd/yyyy
+        r'\b\d{1,2}/\d{1,2}/\d{2,4}\b',
     ]
     
     expressions = []
@@ -164,75 +197,150 @@ def extract_temporal_expressions(text):
         matches = re.findall(pattern, text, re.IGNORECASE)
         expressions.extend(matches)
     
-    return list(set(expressions))[:10]  # أول 10 تعابير فريدة
+    return list(set(expressions))[:10]
 
 
-# ============= APIs للفهرسة =============
-
+# ============= APIs =============
 @app.route('/api/index/document', methods=['POST'])
 def index_document():
     """
-    فهرسة مستند واحد
+    فهرسة مستند واحد مع دعم Location اختياري - Fixed Version
     """
     try:
         document = request.json
         
-        if USE_CUSTOM_TOOLS:
-            response = indexer.index_document(document)
-        else:
-            response = client.index(
-                index=INDEX_NAME,
-                body=document,
-                refresh=True
-            )
+        # التأكد من وجود location
+        document = ensure_document_has_location(document)
+        
+        # الحل: استخدم refresh='wait_for' بدل True
+        response = client.index(
+            index=INDEX_NAME,
+            body=document,
+            refresh='wait_for'  # ✅ هذا الحل الصحيح
+        )
+        
+        # تأكد إن المستند اتخزن
+        doc_id = response["_id"]
+        
+        # تحقق من المستند (اختياري)
+        verify = client.get(index=INDEX_NAME, id=doc_id)
         
         return jsonify({
             "success": True,
-            "message": "Document indexed successfully",
-            "document_id": response["_id"]
+            "message": "Document indexed successfully and persisted",
+            "document_id": doc_id,
+            "location": document.get('georeferences', []),
+            "location_source": document.get('location_source', 'manual'),
+            "verified": verify['found']
         }), 201
         
     except Exception as e:
+        import traceback
         return jsonify({
             "success": False,
-            "error": str(e)
+            "error": str(e),
+            "trace": traceback.format_exc()
         }), 500
 
 
 @app.route('/api/index/bulk', methods=['POST'])
 def bulk_index():
     """
-    فهرسة مجموعة من المستندات
+    فهرسة مجموعة مستندات - Fixed Version
     """
     try:
         data = request.json
         documents = data.get("documents", [])
         
-        if USE_CUSTOM_TOOLS:
-            result = indexer.bulk_index_documents(documents)
-            return jsonify({
-                "success": True,
-                "indexed": result["success"],
-                "failed": result["failed"],
-                "total": result["total"]
-            }), 201
-        else:
-            actions = [
-                {
-                    "_index": INDEX_NAME,
-                    "_source": doc
-                }
-                for doc in documents
-            ]
-            
-            success, failed = helpers.bulk(client, actions, raise_on_error=False)
-            
-            return jsonify({
-                "success": True,
-                "indexed": success,
-                "failed": failed,
-                "total": len(documents)
-            }), 201
+        # التأكد من locations لكل مستند
+        for doc in documents:
+            ensure_document_has_location(doc)
+        
+        actions = [
+            {
+                "_index": INDEX_NAME,
+                "_source": doc
+            }
+            for doc in documents
+        ]
+        
+        # ✅ استخدم refresh='wait_for' مع bulk
+        success, failed = helpers.bulk(
+            client, 
+            actions, 
+            raise_on_error=False,
+            refresh='wait_for'  # الحل هنا
+        )
+        
+        # تحقق من العدد الفعلي
+        count = client.count(index=INDEX_NAME)
+        
+        return jsonify({
+            "success": True,
+            "indexed": success,
+            "failed": failed,
+            "total": len(documents),
+            "current_index_count": count['count']
+        }), 201
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "trace": traceback.format_exc()
+        }), 500
+
+
+# ✅ وظيفة جديدة للتحقق من المستند
+@app.route('/api/document/<doc_id>', methods=['GET'])
+def get_document(doc_id):
+    """
+    جلب مستند محدد للتحقق من وجوده
+    """
+    try:
+        doc = client.get(index=INDEX_NAME, id=doc_id)
+        
+        return jsonify({
+            "success": True,
+            "found": doc['found'],
+            "document": doc['_source']
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "found": False
+        }), 404
+
+
+# ✅ وظيفة للتحقق من استقرار البيانات
+@app.route('/api/index/verify', methods=['GET'])
+def verify_index():
+    """
+    التحقق من حالة الفهرس والبيانات
+    """
+    try:
+        # عدد المستندات
+        count = client.count(index=INDEX_NAME)
+        
+        # إحصائيات الفهرس
+        stats = client.indices.stats(index=INDEX_NAME)
+        
+        # حالة الفهرس
+        health = client.cluster.health(index=INDEX_NAME)
+        
+        return jsonify({
+            "success": True,
+            "document_count": count['count'],
+            "index_health": health['status'],
+            "shards": {
+                "total": health['active_shards'],
+                "primary": health['active_primary_shards']
+            },
+            "message": "Index is stable" if count['count'] > 0 else "Index is empty"
+        })
         
     except Exception as e:
         return jsonify({
@@ -240,129 +348,10 @@ def bulk_index():
             "error": str(e)
         }), 500
 
-
-@app.route('/api/index/from-folder', methods=['POST'])
-def index_from_folder():
-    """
-    قراءة وفهرسة جميع ملفات .sgm من مجلد database
-    """
-    try:
-        if request.is_json:
-            data = request.json
-        else:
-            data = {}
-        
-        folder_path = data.get("folder_path", "database")
-        
-        print(f"\n{'='*60}")
-        print(f"Starting indexing from folder: {folder_path}")
-        print(f"{'='*60}")
-        
-        if not os.path.exists(folder_path):
-            return jsonify({
-                "success": False,
-                "error": f"Folder '{folder_path}' not found"
-            }), 404
-        
-        if not os.path.isdir(folder_path):
-            return jsonify({
-                "success": False,
-                "error": f"'{folder_path}' is not a directory"
-            }), 400
-        
-        all_documents = []
-        processed_files = []
-        errors = []
-        
-        print(f"Scanning folder: {folder_path}")
-        sgm_files = list(Path(folder_path).glob("*.sgm"))
-        
-        if not sgm_files:
-            return jsonify({
-                "success": False,
-                "error": f"No .sgm files found in '{folder_path}' folder"
-            }), 404
-        
-        print(f"Found {len(sgm_files)} .sgm files")
-        
-        for file_path in sgm_files:
-            try:
-                print(f"Processing: {file_path.name}")
-                documents = parse_sgm_file(str(file_path))
-                all_documents.extend(documents)
-                processed_files.append(file_path.name)
-                print(f"✓ {file_path.name}: Extracted {len(documents)} documents")
-            except Exception as e:
-                error_msg = f"{file_path.name}: {str(e)}"
-                errors.append(error_msg)
-                print(f"✗ {error_msg}")
-        
-        if all_documents:
-            print(f"\nIndexing {len(all_documents)} documents...")
-            
-            if USE_CUSTOM_TOOLS:
-                result = indexer.bulk_index_documents(all_documents)
-                print(f"✓ Indexing completed: {result['success']} succeeded, {result['failed']} failed")
-                
-                return jsonify({
-                    "success": True,
-                    "message": f"Successfully indexed documents from {folder_path} folder",
-                    "processed_files": len(processed_files),
-                    "total_documents": len(all_documents),
-                    "indexed": result["success"],
-                    "failed": result["failed"],
-                    "files": processed_files,
-                    "errors": errors
-                }), 201
-            else:
-                actions = [
-                    {
-                        "_index": INDEX_NAME,
-                        "_source": doc
-                    }
-                    for doc in all_documents
-                ]
-                
-                success, failed = helpers.bulk(client, actions, raise_on_error=False)
-                print(f"✓ Indexing completed: {success} succeeded, {failed} failed")
-                
-                return jsonify({
-                    "success": True,
-                    "message": f"Successfully indexed documents from {folder_path} folder",
-                    "processed_files": len(processed_files),
-                    "total_documents": len(all_documents),
-                    "indexed": success,
-                    "failed": failed,
-                    "files": processed_files,
-                    "errors": errors
-                }), 201
-        else:
-            return jsonify({
-                "success": False,
-                "error": "No documents extracted from .sgm files",
-                "errors": errors
-            }), 400
-        
-    except Exception as e:
-        import traceback
-        error_trace = traceback.format_exc()
-        print(f"\n{'='*60}")
-        print(f"ERROR occurred:")
-        print(error_trace)
-        print(f"{'='*60}\n")
-        return jsonify({
-            "success": False,
-            "error": f"Unexpected error: {str(e)}",
-            "trace": error_trace
-        }), 500
-
-
-# ============= APIs للبحث =============
-
 @app.route('/api/search/autocomplete', methods=['GET'])
 def autocomplete():
     """
-    البحث التلقائي - بدون تكرار
+    البحث التلقائي
     """
     try:
         query = request.args.get('q', '')
@@ -371,56 +360,53 @@ def autocomplete():
         if len(query) < 3:
             return jsonify({
                 "success": True,
-                "results": [],
-                "message": "Query too short (minimum 3 characters)"
+                "results": []
             })
         
-        if USE_CUSTOM_TOOLS:
-            results = query_engine.autocomplete_search(query, size)
-        else:
-            # جيب ضعف العدد للتعويض عن التكرارات
-            search_query = {
-                "size": size * 3,
-                "query": {
-                    "bool": {
-                        "should": [
-                            {
-                                "match": {
-                                    "title": {
-                                        "query": query,
-                                        "fuzziness": "AUTO",
-                                        "boost": 2
-                                    }
-                                }
-                            },
-                            {
-                                "match_phrase_prefix": {
-                                    "title": {
-                                        "query": query,
-                                        "boost": 3
-                                    }
+        search_query = {
+            "size": size * 3,
+            "query": {
+                "bool": {
+                    "should": [
+                        {
+                            "match": {
+                                "title": {
+                                    "query": query,
+                                    "fuzziness": "AUTO",
+                                    "boost": 2
                                 }
                             }
-                        ]
-                    }
-                },
-                "_source": ["title"]
-            }
-            
-            response = client.search(index=INDEX_NAME, body=search_query)
-            
-            results = []
-            for hit in response["hits"]["hits"]:
-                results.append({
-                    "id": hit["_id"],
-                    "title": hit["_source"].get("title", ""),
-                    "score": hit["_score"]
-                })
-            
-            # إزالة التكرارات
-            results = remove_duplicates(results, key="title")
+                        },
+                        {
+                            "match_phrase_prefix": {
+                                "title": {
+                                    "query": query,
+                                    "boost": 3
+                                }
+                            }
+                        }
+                    ]
+                }
+            },
+            "_source": ["title", "content", "georeferences", "location_source"]
+        }
         
-        # أخذ العدد المطلوب فقط
+        response = client.search(index=INDEX_NAME, body=search_query)
+        
+        results = []
+        for hit in response["hits"]["hits"]:
+            source = hit["_source"]
+            results.append({
+                "id": hit["_id"],
+                "title": source.get("title", ""),
+                "content": source.get("content", ""),
+                "georeferences": source.get("georeferences", ["Unknown"]),
+                "location_source": source.get("location_source", "unknown"),
+                "score": hit["_score"]
+            })
+        
+        results = remove_duplicates(results, key="title")
+        
         return jsonify({
             "success": True,
             "results": results[:size]
@@ -432,10 +418,11 @@ def autocomplete():
             "error": str(e)
         }), 500
 
+
 @app.route('/api/search/smart', methods=['POST'])
 def smart_search():
     """
-    البحث الذكي مع المعايير المكانية والزمانية - بدون تكرار
+    البحث الذكي
     """
     try:
         data = request.json
@@ -444,92 +431,88 @@ def smart_search():
         geo = data.get('georeference')
         size = data.get('size', 10)
         
-        if USE_CUSTOM_TOOLS:
-            results = query_engine.smart_search(query_text, temporal, geo, size)
-            total = len(results)
-        else:
-            should_clauses = []
-            
-            if query_text:
-                should_clauses.extend([
-                    {
-                        "match": {
-                            "title": {
-                                "query": query_text,
-                                "boost": 3,
-                                "fuzziness": "AUTO"
-                            }
-                        }
-                    },
-                    {
-                        "match": {
-                            "content": {
-                                "query": query_text,
-                                "boost": 1
-                            }
-                        }
-                    }
-                ])
-            
-            if temporal:
-                should_clauses.append({
+        should_clauses = []
+        
+        if query_text:
+            should_clauses.extend([
+                {
                     "match": {
-                        "temporal_expressions": {
-                            "query": temporal,
-                            "boost": 1.5
+                        "title": {
+                            "query": query_text,
+                            "boost": 3,
+                            "fuzziness": "AUTO"
                         }
-                    }
-                })
-            
-            if geo:
-                should_clauses.append({
-                    "match": {
-                        "georeferences": {
-                            "query": geo,
-                            "boost": 1.5
-                        }
-                    }
-                })
-            
-            # جيب ضعف العدد
-            search_query = {
-                "size": size * 3,
-                "query": {
-                    "bool": {
-                        "should": should_clauses,
-                        "minimum_should_match": 1
                     }
                 },
-                "sort": [
-                    "_score",
-                    {
-                        "date": {
-                            "order": "desc",
-                            "missing": "_last"
+                {
+                    "match": {
+                        "content": {
+                            "query": query_text,
+                            "boost": 1
                         }
                     }
-                ]
-            }
-            
-            response = client.search(index=INDEX_NAME, body=search_query)
-            
-            results = []
-            for hit in response["hits"]["hits"]:
-                result = hit["_source"]
-                result["id"] = hit["_id"]
-                result["score"] = hit["_score"]
-                results.append(result)
-            
-            # إزالة التكرارات
-            results = remove_duplicates(results, key="title")
-            
-            total = len(results)
+                }
+            ])
         
-        # أخذ العدد المطلوب فقط
+        if temporal:
+            should_clauses.append({
+                "match": {
+                    "temporal_expressions": {
+                        "query": temporal,
+                        "boost": 1.5
+                    }
+                }
+            })
+        
+        if geo:
+            should_clauses.append({
+                "match": {
+                    "georeferences": {
+                        "query": geo,
+                        "boost": 1.5
+                    }
+                }
+            })
+        
+        search_query = {
+            "size": size * 3,
+            "query": {
+                "bool": {
+                    "should": should_clauses,
+                    "minimum_should_match": 1
+                }
+            },
+            "sort": [
+                "_score",
+                {
+                    "date": {
+                        "order": "desc",
+                        "missing": "_last"
+                    }
+                }
+            ]
+        }
+        
+        response = client.search(index=INDEX_NAME, body=search_query)
+        
+        results = []
+        for hit in response["hits"]["hits"]:
+            result = hit["_source"]
+            result["id"] = hit["_id"]
+            result["score"] = hit["_score"]
+            
+            # التأكد من وجود georeferences
+            if not result.get('georeferences'):
+                result['georeferences'] = ['Unknown']
+            
+            results.append(result)
+        
+        results = remove_duplicates(results, key="title")
+        
         return jsonify({
             "success": True,
             "results": results[:size],
-            "total": total
+            "total": len(results)
         })
         
     except Exception as e:
@@ -537,43 +520,47 @@ def smart_search():
             "success": False,
             "error": str(e)
         }), 500
-# ============= APIs للتحليلات =============
+
 
 @app.route('/api/analytics/top-georeferences', methods=['GET'])
 def top_georeferences():
     """
-    الحصول على أكثر المواقع تكراراً
+    أكثر المواقع تكراراً
     """
     try:
         size = int(request.args.get('size', 10))
         
-        if USE_CUSTOM_TOOLS:
-            results = query_engine.get_top_georeferences(size)
-        else:
-            query = {
-                "size": 0,
-                "aggs": {
-                    "top_georeferences": {
-                        "terms": {
-                            "field": "georeferences.keyword",
-                            "size": size
-                        }
+        query = {
+            "size": 0,
+            "aggs": {
+                "top_georeferences": {
+                    "terms": {
+                        "field": "georeferences.keyword",
+                        "size": size * 2  # ضعف العدد للتأكد
                     }
                 }
             }
+        }
+        
+        response = client.search(index=INDEX_NAME, body=query)
+        
+        results = []
+        if "aggregations" in response:
+            buckets = response["aggregations"]["top_georeferences"]["buckets"]
+            # فلترة Unknown إذا كان فيه مواقع تانية
+            filtered_buckets = [b for b in buckets if b["key"] != "Unknown"]
             
-            response = client.search(index=INDEX_NAME, body=query)
+            # إذا ما فيه غير Unknown، خليه
+            if not filtered_buckets:
+                filtered_buckets = buckets
             
-            results = []
-            if "aggregations" in response:
-                buckets = response["aggregations"]["top_georeferences"]["buckets"]
-                results = [
-                    {
-                        "georeference": bucket["key"],
-                        "count": bucket["doc_count"]
-                    }
-                    for bucket in buckets
-                ]
+            results = [
+                {
+                    "georeference": bucket["key"],
+                    "count": bucket["doc_count"]
+                }
+                for bucket in filtered_buckets[:size]
+            ]
         
         return jsonify({
             "success": True,
@@ -595,35 +582,32 @@ def time_distribution():
     try:
         interval = request.args.get('interval', '1d')
         
-        if USE_CUSTOM_TOOLS:
-            results = query_engine.get_documents_distribution_over_time(interval)
-        else:
-            query = {
-                "size": 0,
-                "aggs": {
-                    "documents_over_time": {
-                        "date_histogram": {
-                            "field": "date",
-                            "calendar_interval": interval,
-                            "format": "yyyy-MM-dd",
-                            "min_doc_count": 0
-                        }
+        query = {
+            "size": 0,
+            "aggs": {
+                "documents_over_time": {
+                    "date_histogram": {
+                        "field": "date",
+                        "calendar_interval": interval,
+                        "format": "yyyy-MM-dd",
+                        "min_doc_count": 0
                     }
                 }
             }
-            
-            response = client.search(index=INDEX_NAME, body=query)
-            
-            results = []
-            if "aggregations" in response:
-                buckets = response["aggregations"]["documents_over_time"]["buckets"]
-                results = [
-                    {
-                        "date": bucket["key_as_string"],
-                        "count": bucket["doc_count"]
-                    }
-                    for bucket in buckets
-                ]
+        }
+        
+        response = client.search(index=INDEX_NAME, body=query)
+        
+        results = []
+        if "aggregations" in response:
+            buckets = response["aggregations"]["documents_over_time"]["buckets"]
+            results = [
+                {
+                    "date": bucket["key_as_string"],
+                    "count": bucket["doc_count"]
+                }
+                for bucket in buckets
+            ]
         
         return jsonify({
             "success": True,
@@ -640,7 +624,7 @@ def time_distribution():
 @app.route('/api/analytics/dashboard', methods=['GET'])
 def dashboard():
     """
-    لوحة تحكم شاملة بجميع التحليلات
+    لوحة التحكم
     """
     try:
         count_response = client.count(index=INDEX_NAME)
@@ -703,18 +687,17 @@ def dashboard():
         }), 500
 
 
-# ============= APIs للإدارة =============
-
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """
-    فحص حالة النظام
+    فحص الصحة
     """
     try:
         info = client.info()
         return jsonify({
             "success": True,
-            "opensearch": info
+            "opensearch": info,
+            "nlp_available": NLP_AVAILABLE
         })
     except Exception as e:
         return jsonify({
@@ -732,8 +715,7 @@ def index_stats():
         if not client.indices.exists(index=INDEX_NAME):
             return jsonify({
                 "success": False,
-                "error": f"Index '{INDEX_NAME}' does not exist",
-                "message": "Please run /api/index/from-folder first"
+                "error": f"Index '{INDEX_NAME}' does not exist"
             }), 404
         
         stats = client.indices.stats(index=INDEX_NAME)
@@ -752,129 +734,6 @@ def index_stats():
         })
         
     except Exception as e:
-        import traceback
-        print(f"\n{'='*60}")
-        print(f"❌ Error in /api/index/stats:")
-        print(f"Error: {str(e)}")
-        print(f"{'='*60}")
-        traceback.print_exc()
-        
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "error_type": type(e).__name__
-        }), 500
-    
-@app.route('/api/admin/remove-duplicates', methods=['POST'])
-def admin_remove_duplicates():
-    """
-    حذف المستندات المكررة من الفهرس
-    """
-    try:
-        from collections import defaultdict
-        
-        # جلب جميع المستندات
-        query = {
-            "size": 10000,
-            "query": {"match_all": {}},
-            "_source": ["title"]
-        }
-        
-        response = client.search(index=INDEX_NAME, body=query)
-        
-        # تجميع حسب العنوان
-        title_to_ids = defaultdict(list)
-        for hit in response["hits"]["hits"]:
-            title = hit["_source"].get("title", "").strip()
-            doc_id = hit["_id"]
-            if title:  # تجاهل العناوين الفارغة
-                title_to_ids[title.lower()].append(doc_id)
-        
-        # حذف التكرارات
-        deleted_count = 0
-        deleted_titles = []
-        
-        for title, ids in title_to_ids.items():
-            if len(ids) > 1:
-                # احذف كل النسخ ما عدا الأولى
-                for doc_id in ids[1:]:
-                    try:
-                        client.delete(index=INDEX_NAME, id=doc_id, refresh=True)
-                        deleted_count += 1
-                    except Exception as e:
-                        print(f"Error deleting {doc_id}: {e}")
-                
-                deleted_titles.append({
-                    "title": title,
-                    "copies": len(ids),
-                    "kept": ids[0],
-                    "deleted": ids[1:]
-                })
-        
-        return jsonify({
-            "success": True,
-            "deleted_count": deleted_count,
-            "deleted_titles": deleted_titles,
-            "message": f"Removed {deleted_count} duplicate documents"
-        })
-        
-    except Exception as e:
-        import traceback
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "trace": traceback.format_exc()
-        }), 500
-
-
-@app.route('/api/admin/check-duplicates', methods=['GET'])
-def admin_check_duplicates():
-    """
-    فحص وجود مستندات مكررة بدون حذفها
-    """
-    try:
-        from collections import defaultdict
-        
-        # جلب جميع المستندات
-        query = {
-            "size": 10000,
-            "query": {"match_all": {}},
-            "_source": ["title"]
-        }
-        
-        response = client.search(index=INDEX_NAME, body=query)
-        
-        # تجميع حسب العنوان
-        title_to_ids = defaultdict(list)
-        for hit in response["hits"]["hits"]:
-            title = hit["_source"].get("title", "").strip()
-            doc_id = hit["_id"]
-            if title:
-                title_to_ids[title.lower()].append(doc_id)
-        
-        # البحث عن التكرارات
-        duplicates = []
-        total_duplicates = 0
-        
-        for title, ids in title_to_ids.items():
-            if len(ids) > 1:
-                duplicates.append({
-                    "title": title,
-                    "count": len(ids),
-                    "ids": ids
-                })
-                total_duplicates += len(ids) - 1
-        
-        return jsonify({
-            "success": True,
-            "has_duplicates": len(duplicates) > 0,
-            "unique_titles": len(title_to_ids),
-            "duplicate_titles": len(duplicates),
-            "total_duplicate_docs": total_duplicates,
-            "duplicates": duplicates[:20]  # أول 20 فقط
-        })
-        
-    except Exception as e:
         return jsonify({
             "success": False,
             "error": str(e)
@@ -883,12 +742,11 @@ def admin_check_duplicates():
 
 if __name__ == '__main__':
     print("="*60)
-    print("Smart Document Retrieval System - Flask API")
+    print("Smart Document Retrieval System - Enhanced Location Support")
     print("="*60)
-    print(f"Reading .sgm files from: database folder")
     print(f"OpenSearch: {OPENSEARCH_HOST}:{OPENSEARCH_PORT}")
     print(f"Index: {INDEX_NAME}")
-    print(f"Authentication: DISABLED")
-    print(f"Custom tools: {USE_CUSTOM_TOOLS}")
+    print(f"NLP Available: {NLP_AVAILABLE}")
+    print(f"Auto-location extraction: {'Enabled' if NLP_AVAILABLE else 'Disabled'}")
     print("="*60)
     app.run(debug=True, host='0.0.0.0', port=5000)

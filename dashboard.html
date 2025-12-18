@@ -5,6 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Smart Document Retrieval System</title>
     <style>
+        :root {
+            --blue-light: #E3F2FD;
+            --blue-soft: #BFDFFF;
+            --gray-light: #F2F2F2;
+            --gray-soft: #E0E0E0;
+            --white: #FFFFFF;
+            --blue-primary: #42A5F5;
+            --blue-dark: #1976D2;
+        }
+        
         * {
             margin: 0;
             padding: 0;
@@ -13,29 +23,93 @@
         
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, var(--blue-light) 0%, var(--blue-soft) 50%, var(--gray-light) 100%);
             min-height: 100vh;
+            position: relative;
+            overflow-x: hidden;
+        }
+        
+        body::before {
+            content: '';
+            position: fixed;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(66, 165, 245, 0.1) 0%, transparent 50%);
+            animation: rotate 30s linear infinite;
+            pointer-events: none;
+            z-index: 0;
+        }
+        
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
         }
         
         .navbar {
-            background: white;
+            background: var(--white);
             padding: 20px 40px;
-            box-shadow: 0 2px 15px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 20px rgba(66, 165, 245, 0.15);
             display: flex;
             justify-content: space-between;
             align-items: center;
+            position: relative;
+            z-index: 10;
+            animation: slideDown 0.6s ease;
+            backdrop-filter: blur(10px);
+        }
+        
+        @keyframes slideDown {
+            from {
+                transform: translateY(-100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
         }
         
         .navbar h1 {
-            color: #4a5568;
+            color: var(--blue-dark);
             font-size: 1.8em;
             font-weight: 600;
+            position: relative;
+            animation: fadeIn 0.8s ease 0.2s both;
+        }
+        
+        .navbar h1::after {
+            content: '';
+            position: absolute;
+            bottom: -5px;
+            left: 0;
+            width: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--blue-primary), var(--blue-soft));
+            animation: expandWidth 1.2s ease 0.8s forwards;
+        }
+        
+        @keyframes expandWidth {
+            to { width: 100%; }
+        }
+        
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
         }
         
         .status {
             display: flex;
             gap: 15px;
             align-items: center;
+            animation: fadeIn 0.8s ease 0.4s both;
         }
         
         .status-badge {
@@ -46,6 +120,12 @@
             display: flex;
             align-items: center;
             gap: 8px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .status-badge:hover {
+            transform: scale(1.05);
         }
         
         .status-badge::before {
@@ -57,22 +137,25 @@
         }
         
         .status-online {
-            background: #c6f6d5;
-            color: #22543d;
+            background: linear-gradient(135deg, #A8E6CF 0%, #56C596 100%);
+            color: #0D5C3D;
+            box-shadow: 0 2px 10px rgba(86, 197, 150, 0.3);
         }
         
         .status-online::before {
-            background: #48bb78;
-            animation: pulse 2s infinite;
+            background: #0D5C3D;
+            animation: pulse 2s infinite, ripple 2s infinite;
+            box-shadow: 0 0 0 0 rgba(86, 197, 150, 0.7);
         }
         
         .status-offline {
-            background: #fed7d7;
-            color: #742a2a;
+            background: linear-gradient(135deg, #FFCCCB 0%, #FF6B6B 100%);
+            color: #8B0000;
+            box-shadow: 0 2px 10px rgba(255, 107, 107, 0.3);
         }
         
         .status-offline::before {
-            background: #f56565;
+            background: #8B0000;
         }
         
         @keyframes pulse {
@@ -80,10 +163,21 @@
             50% { opacity: 0.5; }
         }
         
+        @keyframes ripple {
+            0% {
+                box-shadow: 0 0 0 0 rgba(86, 197, 150, 0.7);
+            }
+            100% {
+                box-shadow: 0 0 0 10px rgba(86, 197, 150, 0);
+            }
+        }
+        
         .container {
             max-width: 1400px;
             margin: 30px auto;
             padding: 0 20px;
+            position: relative;
+            z-index: 1;
         }
         
         .stats-row {
@@ -94,31 +188,86 @@
         }
         
         .stat-card {
-            background: white;
-            border-radius: 12px;
+            background: var(--white);
+            border-radius: 16px;
             padding: 25px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
-            transition: all 0.3s ease;
+            box-shadow: 0 8px 25px rgba(66, 165, 245, 0.12);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+            animation: floatIn 0.6s ease both;
         }
         
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(45deg, transparent, rgba(66, 165, 245, 0.1), transparent);
+            transform: rotate(45deg);
+            transition: all 0.6s;
+        }
+        
+        .stat-card:hover::before {
+            animation: shimmer 1.5s infinite;
+        }
+        
+        @keyframes shimmer {
+            0% { transform: translateX(-100%) rotate(45deg); }
+            100% { transform: translateX(100%) rotate(45deg); }
+        }
+        
+        @keyframes floatIn {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .stat-card:nth-child(1) { animation-delay: 0.1s; }
+        .stat-card:nth-child(2) { animation-delay: 0.2s; }
+        
         .stat-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 8px 25px rgba(0,0,0,0.12);
+            transform: translateY(-8px) scale(1.02);
+            box-shadow: 0 15px 40px rgba(66, 165, 245, 0.25);
         }
         
         .stat-card .stat-number {
             font-size: 2.5em;
             font-weight: 700;
-            color: #667eea;
+            background: linear-gradient(135deg, var(--blue-primary), var(--blue-dark));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
             display: block;
             margin-bottom: 5px;
+            position: relative;
+            animation: countUp 1s ease both;
+        }
+        
+        @keyframes countUp {
+            from {
+                opacity: 0;
+                transform: scale(0.5);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
         }
         
         .stat-card .stat-label {
-            color: #718096;
+            color: var(--blue-dark);
             font-size: 0.95em;
             text-transform: uppercase;
             letter-spacing: 0.5px;
+            opacity: 0.8;
         }
         
         .main-grid {
@@ -128,20 +277,57 @@
         }
         
         .card {
-            background: white;
-            border-radius: 12px;
+            background: var(--white);
+            border-radius: 16px;
             padding: 30px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
-            transition: all 0.3s ease;
+            box-shadow: 0 8px 25px rgba(66, 165, 245, 0.12);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            animation: floatIn 0.6s ease both;
+            position: relative;
+            overflow: hidden;
         }
         
+        .card::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(90deg, var(--blue-primary), var(--blue-soft));
+            transform: scaleX(0);
+            transform-origin: left;
+            transition: transform 0.6s ease;
+        }
+        
+        .card:hover::after {
+            transform: scaleX(1);
+        }
+        
+        .card:nth-child(1) { animation-delay: 0.2s; }
+        .card:nth-child(2) { animation-delay: 0.3s; }
+        .card:nth-child(3) { animation-delay: 0.4s; }
+        .card:nth-child(4) { animation-delay: 0.5s; }
+        
         .card h2 {
-            color: #2d3748;
+            color: var(--blue-dark);
             margin-bottom: 20px;
             font-size: 1.5em;
             font-weight: 600;
             padding-bottom: 15px;
-            border-bottom: 2px solid #e2e8f0;
+            border-bottom: 2px solid var(--gray-soft);
+            position: relative;
+        }
+        
+        .card h2::before {
+            content: '📄';
+            margin-right: 10px;
+            animation: bounce 2s infinite;
+        }
+        
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
         }
         
         .input-group {
@@ -151,7 +337,7 @@
         .input-group label {
             display: block;
             margin-bottom: 8px;
-            color: #4a5568;
+            color: var(--blue-dark);
             font-weight: 500;
             font-size: 0.95em;
         }
@@ -159,41 +345,63 @@
         .search-box, textarea {
             width: 100%;
             padding: 12px 16px;
-            border: 2px solid #e2e8f0;
-            border-radius: 8px;
+            border: 2px solid var(--gray-soft);
+            border-radius: 10px;
             font-size: 15px;
             transition: all 0.3s;
             font-family: inherit;
+            background: var(--white);
         }
         
         .search-box:focus, textarea:focus {
             outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            border-color: var(--blue-primary);
+            box-shadow: 0 0 0 4px rgba(66, 165, 245, 0.15);
+            transform: translateY(-2px);
         }
         
         button {
             width: 100%;
             padding: 14px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, var(--blue-primary) 0%, var(--blue-dark) 100%);
             color: white;
             border: none;
-            border-radius: 8px;
+            border-radius: 10px;
             font-size: 15px;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s;
             text-transform: uppercase;
             letter-spacing: 0.5px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        button::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+            transform: translate(-50%, -50%);
+            transition: width 0.6s, height 0.6s;
+        }
+        
+        button:hover::before {
+            width: 300px;
+            height: 300px;
         }
         
         button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(66, 165, 245, 0.4);
         }
         
         button:active {
-            transform: translateY(0);
+            transform: translateY(-1px);
         }
         
         .results-container {
@@ -203,23 +411,38 @@
         }
         
         .result-item {
-            background: #f7fafc;
+            background: linear-gradient(135deg, var(--blue-light) 0%, var(--white) 100%);
             padding: 18px;
             margin: 12px 0;
-            border-radius: 8px;
-            border-left: 4px solid #667eea;
+            border-radius: 12px;
+            border-left: 4px solid var(--blue-primary);
             transition: all 0.3s;
             cursor: pointer;
+            animation: slideInRight 0.4s ease both;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        @keyframes slideInRight {
+            from {
+                opacity: 0;
+                transform: translateX(-30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
         }
         
         .result-item:hover {
-            background: #edf2f7;
-            transform: translateX(5px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            background: linear-gradient(135deg, var(--blue-soft) 0%, var(--white) 100%);
+            transform: translateX(8px);
+            box-shadow: 0 6px 20px rgba(66, 165, 245, 0.2);
+            border-left-width: 6px;
         }
         
         .result-item .title {
-            color: #2d3748;
+            color: var(--blue-dark);
             font-size: 1.05em;
             font-weight: 600;
             margin-bottom: 8px;
@@ -227,7 +450,7 @@
         }
         
         .result-item .meta {
-            color: #718096;
+            color: #546E7A;
             font-size: 0.85em;
             display: flex;
             gap: 15px;
@@ -235,15 +458,18 @@
         }
         
         .result-item .score {
-            color: #667eea;
+            color: var(--blue-primary);
             font-weight: 600;
+            padding: 2px 8px;
+            background: var(--blue-light);
+            border-radius: 4px;
         }
         
         .result-item .content-preview {
             margin-top: 12px;
             padding-top: 12px;
-            border-top: 1px solid #e2e8f0;
-            color: #4a5568;
+            border-top: 1px solid var(--gray-soft);
+            color: #546E7A;
             font-size: 0.9em;
             line-height: 1.6;
             display: none;
@@ -251,10 +477,10 @@
         
         .result-item.expanded .content-preview {
             display: block;
-            animation: slideDown 0.3s ease;
+            animation: expandContent 0.3s ease;
         }
         
-        @keyframes slideDown {
+        @keyframes expandContent {
             from {
                 opacity: 0;
                 max-height: 0;
@@ -270,7 +496,7 @@
             gap: 10px;
             margin-bottom: 25px;
             flex-wrap: wrap;
-            border-bottom: 2px solid #e2e8f0;
+            border-bottom: 2px solid var(--gray-soft);
             padding-bottom: 15px;
         }
         
@@ -278,30 +504,48 @@
             padding: 10px 20px;
             background: transparent;
             border: none;
-            border-radius: 6px;
+            border-radius: 8px;
             cursor: pointer;
             transition: all 0.3s;
             font-weight: 600;
-            color: #718096;
+            color: var(--blue-dark);
             width: auto;
+            position: relative;
+        }
+        
+        .tab::after {
+            content: '';
+            position: absolute;
+            bottom: -17px;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: var(--blue-primary);
+            transform: scaleX(0);
+            transition: transform 0.3s ease;
         }
         
         .tab:hover {
-            background: #edf2f7;
-            color: #4a5568;
+            background: var(--blue-light);
+            transform: translateY(-2px);
         }
         
         .tab.active {
-            background: #667eea;
+            background: linear-gradient(135deg, var(--blue-primary), var(--blue-dark));
             color: white;
-            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+            box-shadow: 0 4px 15px rgba(66, 165, 245, 0.3);
+        }
+        
+        .tab.active::after {
+            transform: scaleX(1);
         }
         
         .loading {
             text-align: center;
             padding: 40px;
-            color: #667eea;
+            color: var(--blue-primary);
             font-size: 1.1em;
+            font-weight: 600;
         }
         
         .loading::after {
@@ -316,19 +560,27 @@
         }
         
         .error {
-            background: #fff5f5;
-            color: #c53030;
+            background: linear-gradient(135deg, #FFEBEE 0%, #FFCDD2 100%);
+            color: #C62828;
             padding: 15px;
-            border-radius: 8px;
-            border-left: 4px solid #fc8181;
+            border-radius: 10px;
+            border-left: 4px solid #E53935;
+            animation: shake 0.5s ease;
+        }
+        
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-10px); }
+            75% { transform: translateX(10px); }
         }
         
         .success {
-            background: #f0fff4;
-            color: #22543d;
+            background: linear-gradient(135deg, #E8F5E9 0%, #C8E6C9 100%);
+            color: #2E7D32;
             padding: 15px;
-            border-radius: 8px;
-            border-left: 4px solid #48bb78;
+            border-radius: 10px;
+            border-left: 4px solid #66BB6A;
+            animation: slideInRight 0.5s ease;
         }
         
         .analytics-grid {
@@ -342,22 +594,22 @@
         }
         
         ::-webkit-scrollbar-track {
-            background: #edf2f7;
+            background: var(--gray-light);
             border-radius: 10px;
         }
         
         ::-webkit-scrollbar-thumb {
-            background: #cbd5e0;
+            background: linear-gradient(180deg, var(--blue-primary), var(--blue-dark));
             border-radius: 10px;
         }
         
         ::-webkit-scrollbar-thumb:hover {
-            background: #a0aec0;
+            background: var(--blue-dark);
         }
         
         .expand-icon {
             float: right;
-            color: #667eea;
+            color: var(--blue-primary);
             font-weight: bold;
             transition: transform 0.3s;
         }
@@ -377,7 +629,6 @@
     </div>
 
     <div class="container">
-        <!-- Statistics Row -->
         <div class="stats-row">
             <div class="stat-card">
                 <span class="stat-number" id="totalDocs">0</span>
@@ -389,9 +640,7 @@
             </div>
         </div>
 
-        <!-- Main Content -->
         <div class="main-grid">
-            <!-- Autocomplete Search -->
             <div class="card">
                 <h2>Autocomplete Search</h2>
                 <div class="input-group">
@@ -402,7 +651,6 @@
                 <div id="autocompleteResults" class="results-container"></div>
             </div>
 
-            <!-- Smart Search -->
             <div class="card">
                 <h2>Smart Search</h2>
                 <div class="input-group">
@@ -421,7 +669,6 @@
                 <div id="smartResults" class="results-container"></div>
             </div>
 
-            <!-- Analytics -->
             <div class="card">
                 <h2>Advanced Analytics</h2>
                 <div class="tabs">
@@ -432,7 +679,6 @@
                 <div id="analyticsContent" class="results-container"></div>
             </div>
 
-            <!-- Add Document -->
             <div class="card">
                 <h2>Add New Document</h2>
                 <div class="input-group">
@@ -442,6 +688,10 @@
                 <div class="input-group">
                     <label>Document Content:</label>
                     <textarea id="docContent" rows="4" placeholder="Enter document content..."></textarea>
+                </div>
+                <div class="input-group">
+                    <label>Location (Optional - will be auto-extracted if empty):</label>
+                    <input type="text" id="docLocation" class="search-box" placeholder="e.g., New York, London (leave empty for auto-detection)">
                 </div>
                 <button onclick="indexDocument()">Add Document</button>
                 <div id="uploadResult"></div>
@@ -511,17 +761,22 @@
                 if (data.success && data.results.length > 0) {
                     let html = '';
                     data.results.forEach((item, index) => {
+                        const content = item.content || 'No content available';
+                        const locations = item.georeferences || ['Unknown'];
+                        const locationBadge = locations.map(loc => 
+                            `<span style="background: var(--blue-light); padding: 2px 8px; border-radius: 4px; font-size: 0.85em;">📍 ${loc}</span>`
+                        ).join(' ');
+                        
                         html += `
-                            <div class="result-item" onclick="toggleResult(this)">
+                            <div class="result-item" onclick="toggleResult(this)" style="animation-delay: ${index * 0.05}s">
                                 <span class="expand-icon">▼</span>
                                 <span class="title">${index + 1}. ${item.title}</span>
                                 <div class="meta">
                                     <span class="score">Score: ${item.score.toFixed(2)}</span>
                                     <span>ID: ${item.id}</span>
+                                    ${locationBadge}
                                 </div>
-                                <div class="content-preview">
-                                    Click to expand/collapse content preview
-                                </div>
+                                <div class="content-preview">${content}</div>
                             </div>
                         `;
                     });
@@ -564,15 +819,20 @@
                 if (data.success && data.results.length > 0) {
                     let html = '';
                     data.results.forEach((item, index) => {
-                        const content = item.content ? item.content.substring(0, 200) + '...' : 'No content available';
+                        const content = item.content || 'No content available';
+                        const locations = item.georeferences || ['Unknown'];
+                        const locationBadge = locations.map(loc => 
+                            `<span style="background: var(--blue-light); padding: 2px 8px; border-radius: 4px; font-size: 0.85em;">📍 ${loc}</span>`
+                        ).join(' ');
+                        
                         html += `
-                            <div class="result-item" onclick="toggleResult(this)">
+                            <div class="result-item" onclick="toggleResult(this)" style="animation-delay: ${index * 0.05}s">
                                 <span class="expand-icon">▼</span>
                                 <span class="title">${index + 1}. ${item.title}</span>
                                 <div class="meta">
                                     <span class="score">Score: ${item.score.toFixed(2)}</span>
                                     ${item.date ? `<span>Date: ${item.date.substring(0, 10)}</span>` : ''}
-                                    ${item.georeferences && item.georeferences.length > 0 ? `<span>Location: ${item.georeferences[0]}</span>` : ''}
+                                    ${locationBadge}
                                 </div>
                                 <div class="content-preview">${content}</div>
                             </div>
@@ -609,7 +869,7 @@
                     let html = '<div class="analytics-grid">';
                     data.results.forEach((item, index) => {
                         html += `
-                            <div class="result-item">
+                            <div class="result-item" style="animation-delay: ${index * 0.05}s">
                                 <span class="title">${index + 1}. ${item.georeference}</span>
                                 <div class="meta">
                                     <span>Mentions: ${item.count}</span>
@@ -637,10 +897,10 @@
                 
                 if (data.success && data.results.length > 0) {
                     let html = '<div class="analytics-grid">';
-                    data.results.forEach((item) => {
+                    data.results.forEach((item, index) => {
                         if (item.count > 0) {
                             html += `
-                                <div class="result-item">
+                                <div class="result-item" style="animation-delay: ${index * 0.05}s">
                                     <span class="title">${item.date}</span>
                                     <div class="meta">
                                         <span>Documents: ${item.count}</span>
@@ -688,6 +948,7 @@
         async function indexDocument() {
             const title = document.getElementById('docTitle').value;
             const content = document.getElementById('docContent').value;
+            const location = document.getElementById('docLocation').value;
             const resultDiv = document.getElementById('uploadResult');
             
             if (!title || !content) {
@@ -698,22 +959,34 @@
             resultDiv.innerHTML = '<div class="loading">Adding document</div>';
             
             try {
+                const docData = {
+                    title: title,
+                    content: content,
+                    date: new Date().toISOString()
+                };
+                
+                // إضافة Location إذا موجود
+                if (location && location.trim()) {
+                    docData.georeferences = location.split(',').map(l => l.trim());
+                    docData.location_source = 'manual';
+                }
+                
                 const response = await fetch(`${API_URL}/index/document`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        title: title,
-                        content: content,
-                        date: new Date().toISOString()
-                    })
+                    body: JSON.stringify(docData)
                 });
                 
                 const data = await response.json();
                 
                 if (data.success) {
-                    resultDiv.innerHTML = '<div class="success">Document added successfully!</div>';
+                    const locationInfo = data.location && data.location.length > 0 
+                        ? `Location: ${data.location.join(', ')} (${data.location_source})` 
+                        : '';
+                    resultDiv.innerHTML = `<div class="success">Document added successfully!<br>${locationInfo}</div>`;
                     document.getElementById('docTitle').value = '';
                     document.getElementById('docContent').value = '';
+                    document.getElementById('docLocation').value = '';
                     loadDashboard();
                 } else {
                     resultDiv.innerHTML = '<div class="error">Failed to add document</div>';
