@@ -35,6 +35,31 @@ client = OpenSearch(
 )
 
 INDEX_NAME = "smart_documents"
+# ============= دالة إزالة التكرارات =============
+
+def remove_duplicates(results, key="title"):
+    """
+    إزالة التكرارات من النتائج بناءً على مفتاح معين
+    """
+    seen = set()
+    unique_results = []
+    
+    for item in results:
+        # استخراج المفتاح
+        if isinstance(item, dict):
+            identifier = item.get(key, "")
+        else:
+            identifier = getattr(item, key, "")
+        
+        # تحويل لنص صغير وإزالة المسافات
+        identifier = str(identifier).lower().strip()
+        
+        # التحقق من عدم التكرار
+        if identifier and identifier not in seen:
+            seen.add(identifier)
+            unique_results.append(item)
+    
+    return unique_results
 
 # إنشاء الأدوات المخصصة إذا كانت متوفرة
 if USE_CUSTOM_TOOLS:
@@ -337,7 +362,7 @@ def index_from_folder():
 @app.route('/api/search/autocomplete', methods=['GET'])
 def autocomplete():
     """
-    البحث التلقائي
+    البحث التلقائي - بدون تكرار
     """
     try:
         query = request.args.get('q', '')
@@ -353,8 +378,9 @@ def autocomplete():
         if USE_CUSTOM_TOOLS:
             results = query_engine.autocomplete_search(query, size)
         else:
+            # جيب ضعف العدد للتعويض عن التكرارات
             search_query = {
-                "size": size,
+                "size": size * 3,
                 "query": {
                     "bool": {
                         "should": [
@@ -390,10 +416,14 @@ def autocomplete():
                     "title": hit["_source"].get("title", ""),
                     "score": hit["_score"]
                 })
+            
+            # إزالة التكرارات
+            results = remove_duplicates(results, key="title")
         
+        # أخذ العدد المطلوب فقط
         return jsonify({
             "success": True,
-            "results": results
+            "results": results[:size]
         })
         
     except Exception as e:
@@ -402,11 +432,10 @@ def autocomplete():
             "error": str(e)
         }), 500
 
-
 @app.route('/api/search/smart', methods=['POST'])
 def smart_search():
     """
-    البحث الذكي مع المعايير المكانية والزمانية
+    البحث الذكي مع المعايير المكانية والزمانية - بدون تكرار
     """
     try:
         data = request.json
@@ -462,8 +491,9 @@ def smart_search():
                     }
                 })
             
+            # جيب ضعف العدد
             search_query = {
-                "size": size,
+                "size": size * 3,
                 "query": {
                     "bool": {
                         "should": should_clauses,
@@ -490,11 +520,15 @@ def smart_search():
                 result["score"] = hit["_score"]
                 results.append(result)
             
-            total = response["hits"]["total"]["value"]
+            # إزالة التكرارات
+            results = remove_duplicates(results, key="title")
+            
+            total = len(results)
         
+        # أخذ العدد المطلوب فقط
         return jsonify({
             "success": True,
-            "results": results,
+            "results": results[:size],
             "total": total
         })
         
@@ -503,8 +537,6 @@ def smart_search():
             "success": False,
             "error": str(e)
         }), 500
-
-
 # ============= APIs للتحليلات =============
 
 @app.route('/api/analytics/top-georeferences', methods=['GET'])
@@ -731,6 +763,121 @@ def index_stats():
             "success": False,
             "error": str(e),
             "error_type": type(e).__name__
+        }), 500
+    
+@app.route('/api/admin/remove-duplicates', methods=['POST'])
+def admin_remove_duplicates():
+    """
+    حذف المستندات المكررة من الفهرس
+    """
+    try:
+        from collections import defaultdict
+        
+        # جلب جميع المستندات
+        query = {
+            "size": 10000,
+            "query": {"match_all": {}},
+            "_source": ["title"]
+        }
+        
+        response = client.search(index=INDEX_NAME, body=query)
+        
+        # تجميع حسب العنوان
+        title_to_ids = defaultdict(list)
+        for hit in response["hits"]["hits"]:
+            title = hit["_source"].get("title", "").strip()
+            doc_id = hit["_id"]
+            if title:  # تجاهل العناوين الفارغة
+                title_to_ids[title.lower()].append(doc_id)
+        
+        # حذف التكرارات
+        deleted_count = 0
+        deleted_titles = []
+        
+        for title, ids in title_to_ids.items():
+            if len(ids) > 1:
+                # احذف كل النسخ ما عدا الأولى
+                for doc_id in ids[1:]:
+                    try:
+                        client.delete(index=INDEX_NAME, id=doc_id, refresh=True)
+                        deleted_count += 1
+                    except Exception as e:
+                        print(f"Error deleting {doc_id}: {e}")
+                
+                deleted_titles.append({
+                    "title": title,
+                    "copies": len(ids),
+                    "kept": ids[0],
+                    "deleted": ids[1:]
+                })
+        
+        return jsonify({
+            "success": True,
+            "deleted_count": deleted_count,
+            "deleted_titles": deleted_titles,
+            "message": f"Removed {deleted_count} duplicate documents"
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "trace": traceback.format_exc()
+        }), 500
+
+
+@app.route('/api/admin/check-duplicates', methods=['GET'])
+def admin_check_duplicates():
+    """
+    فحص وجود مستندات مكررة بدون حذفها
+    """
+    try:
+        from collections import defaultdict
+        
+        # جلب جميع المستندات
+        query = {
+            "size": 10000,
+            "query": {"match_all": {}},
+            "_source": ["title"]
+        }
+        
+        response = client.search(index=INDEX_NAME, body=query)
+        
+        # تجميع حسب العنوان
+        title_to_ids = defaultdict(list)
+        for hit in response["hits"]["hits"]:
+            title = hit["_source"].get("title", "").strip()
+            doc_id = hit["_id"]
+            if title:
+                title_to_ids[title.lower()].append(doc_id)
+        
+        # البحث عن التكرارات
+        duplicates = []
+        total_duplicates = 0
+        
+        for title, ids in title_to_ids.items():
+            if len(ids) > 1:
+                duplicates.append({
+                    "title": title,
+                    "count": len(ids),
+                    "ids": ids
+                })
+                total_duplicates += len(ids) - 1
+        
+        return jsonify({
+            "success": True,
+            "has_duplicates": len(duplicates) > 0,
+            "unique_titles": len(title_to_ids),
+            "duplicate_titles": len(duplicates),
+            "total_duplicate_docs": total_duplicates,
+            "duplicates": duplicates[:20]  # أول 20 فقط
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
         }), 500
 
 
