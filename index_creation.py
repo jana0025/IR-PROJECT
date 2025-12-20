@@ -1,37 +1,34 @@
 from opensearchpy import OpenSearch
 
-# إعداد الاتصال بـ OpenSearch
+# opensearch connection 
 client = OpenSearch(
     hosts=[{'host': 'localhost', 'port': 9200}],
-    http_auth=('admin', 'YourPassword123!'),
-    use_ssl=True,
-    verify_certs=False,
-    ssl_show_warn=False
+    use_ssl=False
 )
 
-# تعريف Index Settings و Mappings
+
 index_name = "smart_documents"
 
 index_body = {
     "settings": {
         "number_of_shards": 1,
-        "number_of_replicas": 1,
+        "number_of_replicas": 0,
         "analysis": {
             "filter": {
-                "edge_ngram_filter": {
+                "edge_ngram_filter": { #for autocomplete
                     "type": "edge_ngram",
                     "min_gram": 3,
                     "max_gram": 20
                 },
-                "stop_filter": {
+                "stop_filter": {# delete stop words
                     "type": "stop",
                     "stopwords": "_english_"
                 },
-                "length_filter": {
+                "length_filter": {# to delete words that have length less than 3 
                     "type": "length",
                     "min": 3
                 },
-                "stemmer_filter": {
+                "stemmer_filter": { # to stem words
                     "type": "stemmer",
                     "language": "english"
                 }
@@ -59,7 +56,7 @@ index_body = {
                         "length_filter",
                         "stemmer_filter"
                     ],
-                    "char_filter": ["html_strip"]
+                    "char_filter": ["html_strip"]# to delete html tags from the code 
                 }
             }
         }
@@ -109,7 +106,8 @@ index_body = {
                 "type": "date",
                 "format": "yyyy-MM-dd'T'HH:mm:ss||yyyy-MM-dd||epoch_millis"
             },
-            "geopoint": {
+            "geopoint": { # هون عملناها ك رقم مش ك نص عشان لما المستخدم يطلب مكان معين بالبحث اذا ما لقينا اكزاكت ماتش نجبله اقرب نص من ناحية المكان عن طريق مقارنة الارقام
+                # طيب اي مكان باخد اذا كان عنا اكتر من مكان بالنص الواحد؟ باخد اكتر مكان بتكرر بالنص 
                 "type": "geo_point"
             },
             "temporal_expressions": {
@@ -118,7 +116,7 @@ index_body = {
                     "keyword": {"type": "keyword"}
                 }
             },
-            "georeferences": {
+            "georeferences": { # الاماكن المذكورة بالنص و الفائدة منها عشان نعرف الاماكن الاكثر تكرار على مستوى الاندكس كامل
                 "type": "text",
                 "fields": {
                     "keyword": {"type": "keyword"}
@@ -128,9 +126,10 @@ index_body = {
                 "type": "date",
                 "format": "yyyy-MM-dd'T'HH:mm:ss||yyyy-MM-dd||epoch_millis"
             },
-            "extracted_locations": {
-                "type": "geo_point"
-            }
+            "geo_points": {
+               "type": "geo_point"
+               }
+
         }
     }
 }

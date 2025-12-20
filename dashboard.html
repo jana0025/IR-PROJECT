@@ -237,7 +237,10 @@
             transform: translateY(-8px) scale(1.02);
             box-shadow: 0 15px 40px rgba(66, 165, 245, 0.25);
         }
-        
+        #analyticsContent {
+        margin-top: 20px;
+}
+
         .stat-card .stat-number {
             font-size: 2.5em;
             font-weight: 700;
@@ -676,7 +679,7 @@
                     <button class="tab" onclick="showTab('timeline', event)">Time Distribution</button>
                     <button class="tab" onclick="showTab('dashboard', event)">Overview</button>
                 </div>
-                <div id="analyticsContent" class="results-container"></div>
+                <div id="analyticsContent" ></div>
             </div>
 
             <div class="card">
@@ -732,7 +735,7 @@
                 
                 if (data.success) {
                     document.getElementById('totalDocs').textContent = data.total_documents.toLocaleString();
-                    document.getElementById('totalLocations').textContent = data.top_georeferences.length;
+                    document.getElementById('totalLocations').textContent = (data.unique_locations || 0).toLocaleString();
                 }
             } catch (error) {
                 console.error('Dashboard load failed:', error);
@@ -950,47 +953,51 @@
             const content = document.getElementById('docContent').value;
             const location = document.getElementById('docLocation').value;
             const resultDiv = document.getElementById('uploadResult');
-            
+
             if (!title || !content) {
                 resultDiv.innerHTML = '<div class="error">Please enter both title and content</div>';
                 return;
             }
-            
+
             resultDiv.innerHTML = '<div class="loading">Adding document</div>';
-            
+
             try {
                 const docData = {
                     title: title,
                     content: content,
                     date: new Date().toISOString()
                 };
-                
-                // إضافة Location إذا موجود
+
                 if (location && location.trim()) {
                     docData.georeferences = location.split(',').map(l => l.trim());
                     docData.location_source = 'manual';
                 }
-                
+
                 const response = await fetch(`${API_URL}/index/document`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(docData)
                 });
-                
+
                 const data = await response.json();
-                
-                if (data.success) {
-                    const locationInfo = data.location && data.location.length > 0 
-                        ? `Location: ${data.location.join(', ')} (${data.location_source})` 
-                        : '';
-                    resultDiv.innerHTML = `<div class="success">Document added successfully!<br>${locationInfo}</div>`;
-                    document.getElementById('docTitle').value = '';
-                    document.getElementById('docContent').value = '';
-                    document.getElementById('docLocation').value = '';
-                    loadDashboard();
-                } else {
-                    resultDiv.innerHTML = '<div class="error">Failed to add document</div>';
+
+                if (!response.ok || !data.success) {
+                    resultDiv.innerHTML = `<div class="error">Failed: ${data.error || response.statusText}</div>`;
+                    return;
                 }
+
+                const locationInfo = (data.georeferences && data.georeferences.length > 0)
+                    ? `Georeferences: ${data.georeferences.join(', ')} (${data.location_source})`
+                    : `Georeferences: none (${data.location_source})`;
+
+                resultDiv.innerHTML = `<div class="success">Document added successfully!<br>${locationInfo}</div>`;
+
+                document.getElementById('docTitle').value = '';
+                document.getElementById('docContent').value = '';
+                document.getElementById('docLocation').value = '';
+
+                loadDashboard();
+
             } catch (error) {
                 resultDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
             }
